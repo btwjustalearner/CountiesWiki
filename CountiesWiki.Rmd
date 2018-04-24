@@ -1,0 +1,97 @@
+---
+title: "CountiesWiki"
+output: rmarkdown::github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r echo=FALSE,message=FALSE, warning=FALSE, error=FALSE}
+library(XML)
+library(RCurl)
+library(tidyverse)
+county = readHTMLTable(getURL("https://en.wikipedia.org/wiki/List_of_United_States_counties_and_county_equivalents"))
+name = county$`The 3,142 counties and county equivalents of the United States of America`$`County or equivalent`
+state= county$`The 3,142 counties and county equivalents of the United States of America`$`State or district`
+
+name = as.character(name)
+delete = NULL
+for(i in 1:length(name)){
+  name1 = unlist(strsplit(name[i],","))
+  name2 = paste(name1,collapse=" ")
+  if(name2 != name[i]){
+    delete = c(delete,i)
+  } else{
+    name1 = unlist(strsplit(name[i]," "))
+    if(name1[length(name1)] != "County")
+      delete = c(delete,i)
+  }
+}  
+name = name[-delete]
+state = as.character(state)
+state = state[-delete]
+state[state == "Hawaiʻi"] = "Hawaii"
+library(stringr)
+scrapeLinks = function(x){  
+  # given a line of cnty, it extracts the url for a wiki page of a county
+  # stolen from http://stackoverflow.com/questions/3746256/extract-links-from-webpage-using-r
+  url = paste("https://en.wikipedia.org/wiki/", 
+              sub(" ", "_", x[1]),",_", sub(" ", "_", x[2]), sep="")  # the page url's are nicely structured!
+  lines = try(readLines(url), silent = T)
+  if(length(lines) ==0) return(c())
+  html <- paste(lines, collapse="\n")
+  matched <- str_match_all(html, "<a href=\"(.*?)\"")
+  links <- matched[[1]][, 2]
+  return(links)
+}
+name_improved = gsub(" ","_",name)
+alllink = paste("/wiki/",name_improved,",_",state,sep = "")
+library(Matrix)
+ad = sparseMatrix(i = 1:2979, j = 1:2979)
+ad[nrow(ad) == ncol(ad)] = FALSE
+for(i in 1 : length(name)){
+  temp_name = c(name_improved[i],state[i])
+  x = scrapeLinks(temp_name)
+  for(j in 1:length(alllink)){
+    if(alllink[j] %in% x){
+      ad[i,j] = TRUE
+    }
+  }
+}
+D = Diagonal(n = nrow(ad),apply(ad,1,sum))
+ordered_state = state[order(apply(ad,1,sum),decreasing = T)]
+statedata = data.frame(ordered_state)
+counts = statedata %>% count(ordered_state)
+counts = counts[order(counts$n,decreasing = T),]
+counts
+L = Diagonal(n = nrow(ad),rep(1,nrow(ad))) - solve(D)%*%ad
+decomp = svd(L)
+decomp$d[2]
+egienvector2 = decomp$u[,2978]
+plot(egienvector2[order(egienvector2)])
+top200 = order(egienvector2,decreasing = T)[1:200]
+top200
+name_improved[top200]
+state[top200]
+library(choroplethr)
+fips = readLines("fips.rtf")
+fips = fips[10:length(fips)]
+fipcode = NULL
+
+for(i in 1:length(fips)){
+  temp = unlist(strsplit(fips[i],","))[c(2,3,4)]
+  if(temp[3] %in% name){
+    fipcode = c(fipcode,paste(temp[1],temp[2],sep = ""))
+  }
+}
+
+region = as.numeric(fipcode[order(egienvector2,decreasing = T)])
+value = egienvector2[order(egienvector2,decreasing = T)]
+df = data.frame(region,value)
+county_choropleth(df)
+
+
+```
